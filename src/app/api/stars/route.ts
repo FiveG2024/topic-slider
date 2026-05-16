@@ -29,14 +29,19 @@ export async function POST(req: NextRequest) {
         deletedAt: null,
       },
     }),
+    // Topics are subject-scoped; the topic is valid for this class iff the
+    // subject is linked to it via SubjectClass.
     prisma.topic.findFirst({
       where: {
         id: topicId,
         tenantId: ctx.tenantId,
-        classId: ctx.classId,
         subjectId: ctx.subjectId,
-        schoolClass: { deletedAt: null },
-        subject: { deletedAt: null },
+        subject: {
+          deletedAt: null,
+          classLinks: {
+            some: { classId: ctx.classId, schoolClass: { deletedAt: null } },
+          },
+        },
       },
     }),
   ]);

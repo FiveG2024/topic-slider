@@ -32,7 +32,8 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   if (topicCount > 0) {
     return NextResponse.json(
       {
-        error: "Cannot archive a class that still has topics. Delete those topics first.",
+        error:
+          "Cannot archive a class that still has topics. Unlink its subjects from the pool first (Admin → Subject pool).",
         code: "HAS_TOPICS",
         topicCount,
       },

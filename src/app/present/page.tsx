@@ -58,7 +58,8 @@ export default function PresentPage() {
     <div className="max-w-[min(100%,56rem)] mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold text-gray-900 mb-2">Present a Topic</h1>
       <p className="text-gray-600 mb-6">
-        Choose a topic to present to students. Topics marked as taught will be hidden by default.
+        Choose a topic to present to students. Topics marked as taught <strong>in this class</strong> will be
+        hidden by default — the same topic can still be untaught in another class.
       </p>
 
       <div className="flex gap-2 mb-6">

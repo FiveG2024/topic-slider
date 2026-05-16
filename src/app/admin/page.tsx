@@ -42,24 +42,47 @@ export default function AdminPage() {
   const [classId, setClassId] = useState("");
   const [subjectId, setSubjectId] = useState("");
 
-  const reloadCatalog = useCallback(async () => {
-    const [c, s] = await Promise.all([fetch("/api/me/classes"), fetch("/api/me/subjects")]);
+  const reloadClasses = useCallback(async () => {
+    const c = await fetch("/api/me/classes");
+    if (!c.ok) return;
     const cl = await c.json();
-    const su = await s.json();
     if (Array.isArray(cl)) setClasses(cl);
+  }, []);
+
+  const reloadSubjectsForClass = useCallback(async (cid: string) => {
+    if (!cid) {
+      setSubjects([]);
+      return;
+    }
+    const s = await fetch(`/api/me/subjects?classId=${encodeURIComponent(cid)}`);
+    if (!s.ok) {
+      setSubjects([]);
+      return;
+    }
+    const su = await s.json();
     if (Array.isArray(su)) setSubjects(su);
   }, []);
 
   useEffect(() => {
     if (session?.user) {
-      reloadCatalog().catch(() => {});
+      reloadClasses().catch(() => {});
     }
-  }, [session?.user, reloadCatalog]);
+  }, [session?.user, reloadClasses]);
 
   useEffect(() => {
     if (session?.user?.classId) setClassId(session.user.classId);
     if (session?.user?.subjectId) setSubjectId(session.user.subjectId);
   }, [session?.user?.classId, session?.user?.subjectId]);
+
+  useEffect(() => {
+    reloadSubjectsForClass(classId).catch(() => {});
+  }, [classId, reloadSubjectsForClass]);
+
+  useEffect(() => {
+    if (!subjectId) return;
+    if (subjects.length === 0) return;
+    if (!subjects.some((s) => s.id === subjectId)) setSubjectId("");
+  }, [subjects, subjectId]);
 
   const fetchTopics = useCallback(async () => {
     setPageError("");
@@ -164,9 +187,10 @@ export default function AdminPage() {
           />
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Admin Panel</h1>
           <p className="text-sm text-gray-600 mb-6">
-            Topics listed here match your current class and subject (
+            Topics here belong to your current <strong>subject</strong> and are shared across every class
+            it&apos;s linked to. The <em>taught</em> badge below tracks just <strong>this class</strong> (
             <Link href="/context" className="text-indigo-600 font-medium hover:underline">
-              change
+              change context
             </Link>
             ).
           </p>
@@ -183,6 +207,21 @@ export default function AdminPage() {
               className="shrink-0 bg-gray-100 hover:bg-gray-200 text-gray-900 text-sm font-medium px-4 py-2 rounded-lg text-center border border-gray-300"
             >
               Open archive tools
+            </Link>
+          </div>
+
+          <div className="mb-6 p-4 rounded-xl border border-gray-200 bg-white flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-gray-900">Subject pool</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                Manage shared pool subjects and link them to one or many classes.
+              </p>
+            </div>
+            <Link
+              href="/admin/subjects"
+              className="shrink-0 bg-gray-100 hover:bg-gray-200 text-gray-900 text-sm font-medium px-4 py-2 rounded-lg text-center border border-gray-300"
+            >
+              Manage subject pool
             </Link>
           </div>
 
@@ -243,15 +282,30 @@ export default function AdminPage() {
                     value={subjectId}
                     onChange={(e) => setSubjectId(e.target.value)}
                     required
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900"
+                    disabled={!classId}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 disabled:opacity-50"
                   >
-                    <option value="">Select…</option>
+                    <option value="">
+                      {!classId
+                        ? "Pick a class first…"
+                        : subjects.length === 0
+                          ? "No subjects linked to this class"
+                          : "Select…"}
+                    </option>
                     {subjects.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.name}
                       </option>
                     ))}
                   </select>
+                  {classId && subjects.length === 0 && (
+                    <p className="mt-1 text-xs text-amber-700">
+                      <Link href="/admin/subjects" className="underline font-medium">
+                        Manage the subject pool
+                      </Link>{" "}
+                      to link subjects to this class.
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex flex-col sm:flex-row gap-3">

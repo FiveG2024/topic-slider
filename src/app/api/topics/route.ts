@@ -9,9 +9,48 @@ import {
   type ScopedSession,
   verifyClassInTenant,
   verifySubjectInTenant,
+  verifySubjectLinkedToClass,
 } from "@/lib/scope";
 
-// GET /api/topics — current site + class + subject from session
+/**
+ * Shape returned to clients. Topics are subject-scoped, but every read here
+ * is performed in the context of a class, so we surface that class's
+ * `taught`/`taughtAt` from TopicClassStatus on each row. Absent status row
+ * means "not taught in this class yet".
+ */
+function shapeTopic(
+  topic: {
+    id: string;
+    title: string;
+    description: string | null;
+    sortOrder: number;
+    createdAt: Date;
+    updatedAt: Date;
+    _count: { contents: number; quizzes: number };
+    createdBy: { username: string; displayName: string | null; role: string } | null;
+    updatedBy: { username: string; displayName: string | null; role: string } | null;
+    classStatuses: { taught: boolean; taughtAt: Date | null }[];
+  }
+) {
+  const status = topic.classStatuses[0] ?? null;
+  return {
+    id: topic.id,
+    title: topic.title,
+    description: topic.description,
+    sortOrder: topic.sortOrder,
+    createdAt: topic.createdAt,
+    updatedAt: topic.updatedAt,
+    taught: status?.taught ?? false,
+    taughtAt: status?.taughtAt ?? null,
+    _count: topic._count,
+    createdBy: topic.createdBy,
+    updatedBy: topic.updatedBy,
+  };
+}
+
+// GET /api/topics — topics for the current subject, visible because the
+// subject is linked to the current class. Each topic carries that class's
+// per-class taught status.
 export async function GET() {
   const authz = await requireAuthForSchool();
   if (!authz.ok) return authz.res;
@@ -21,22 +60,31 @@ export async function GET() {
   const topics = await prisma.topic.findMany({
     where: {
       tenantId: ctx.tenantId,
-      classId: ctx.classId,
       subjectId: ctx.subjectId,
-      schoolClass: { deletedAt: null },
-      subject: { deletedAt: null },
+      subject: {
+        deletedAt: null,
+        classLinks: { some: { classId: ctx.classId, schoolClass: { deletedAt: null } } },
+      },
     },
     orderBy: { sortOrder: "asc" },
     include: {
       _count: { select: { contents: true, quizzes: true } },
       createdBy: { select: { username: true, displayName: true, role: true } },
       updatedBy: { select: { username: true, displayName: true, role: true } },
+      classStatuses: {
+        where: { classId: ctx.classId },
+        select: { taught: true, taughtAt: true },
+        take: 1,
+      },
     },
   });
-  return NextResponse.json(topics);
+
+  return NextResponse.json(topics.map(shapeTopic));
 }
 
-// POST /api/topics — admin; class + subject must belong to your site
+// POST /api/topics — admin. Creates a *subject-scoped* topic. classId in the
+// body is the admin's current class and is required only to gate creation
+// (subject must be linked to that class). The topic itself has no class.
 export async function POST(req: NextRequest) {
   const authz = await requireAuth();
   if (!authz.ok) return authz.res;
@@ -70,14 +118,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid class or subject for this site" }, { status: 400 });
   }
 
+  const linked = await verifySubjectLinkedToClass(tenantId, subjectId, classId);
+  if (!linked) {
+    return NextResponse.json(
+      {
+        error:
+          "That subject isn’t linked to this class yet. Open Subjects (admin) and add this subject to the class first.",
+        code: "SUBJECT_NOT_LINKED",
+      },
+      { status: 400 }
+    );
+  }
+
   const maxOrder = await prisma.topic.aggregate({
-    where: {
-      tenantId,
-      classId,
-      subjectId,
-      schoolClass: { deletedAt: null },
-      subject: { deletedAt: null },
-    },
+    where: { tenantId, subjectId, subject: { deletedAt: null } },
     _max: { sortOrder: true },
   });
 
@@ -85,7 +139,6 @@ export async function POST(req: NextRequest) {
   const topic = await prisma.topic.create({
     data: {
       tenantId,
-      classId,
       subjectId,
       title: title.trim(),
       description: description?.trim() || null,
@@ -97,6 +150,11 @@ export async function POST(req: NextRequest) {
       _count: { select: { contents: true, quizzes: true } },
       createdBy: { select: { username: true, displayName: true, role: true } },
       updatedBy: { select: { username: true, displayName: true, role: true } },
+      classStatuses: {
+        where: { classId },
+        select: { taught: true, taughtAt: true },
+        take: 1,
+      },
     },
   });
 
@@ -104,9 +162,9 @@ export async function POST(req: NextRequest) {
     action: "TOPIC_CREATE",
     entityType: "Topic",
     entityId: topic.id,
-    summary: `Created topic “${topic.title}”`,
-    metadata: { title: topic.title, classId, subjectId },
+    summary: `Created topic “${topic.title}” (subject pool)`,
+    metadata: { title: topic.title, subjectId, viaClassId: classId },
   });
 
-  return NextResponse.json(topic, { status: 201 });
+  return NextResponse.json(shapeTopic(topic), { status: 201 });
 }

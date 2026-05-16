@@ -90,6 +90,29 @@ async function seedTenant(
     }
   }
 
+  // Common Pool defaults: link every seeded subject to every seeded class for
+  // this tenant. Idempotent — skipDuplicates avoids re-inserting on re-seed.
+  const tenantClasses = await prisma.schoolClass.findMany({
+    where: { tenantId: tenant.id, deletedAt: null },
+    select: { id: true },
+  });
+  const tenantSubjects = await prisma.subject.findMany({
+    where: { tenantId: tenant.id, deletedAt: null },
+    select: { id: true },
+  });
+  if (tenantClasses.length && tenantSubjects.length) {
+    await prisma.subjectClass.createMany({
+      data: tenantSubjects.flatMap((s) =>
+        tenantClasses.map((c) => ({
+          tenantId: tenant.id,
+          subjectId: s.id,
+          classId: c.id,
+        }))
+      ),
+      skipDuplicates: true,
+    });
+  }
+
   await prisma.user.upsert({
     where: {
       tenantId_username: { tenantId: tenant.id, username: adminUser },
@@ -195,13 +218,11 @@ async function seedRichSampleContent(tenantId: string) {
   const topicMain = await prisma.topic.create({
     data: {
       tenantId,
-      classId: class111.id,
       subjectId: bible.id,
       title: RICH_SAMPLE_TOPIC_TITLE,
       description:
         "Demonstrates TEXT, SLIDE, IMAGE (https), VIDEO (YouTube), and quizzes — safe to delete in production.",
       sortOrder: 0,
-      taught: false,
     },
   });
 
@@ -322,11 +343,19 @@ God invites us into **peace** and **trust**.
   const topicTaught = await prisma.topic.create({
     data: {
       tenantId,
-      classId: class113.id,
       subjectId: mezmur.id,
       title: "Sample: Taught topic (seed)",
       description: "Marked taught with a past date — appears as completed in filters.",
       sortOrder: 0,
+    },
+  });
+  // Per-class taught record for the rich sample.
+  await prisma.topicClassStatus.upsert({
+    where: { topicId_classId: { topicId: topicTaught.id, classId: class113.id } },
+    update: { taught: true, taughtAt },
+    create: {
+      topicId: topicTaught.id,
+      classId: class113.id,
       taught: true,
       taughtAt,
     },

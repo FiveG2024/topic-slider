@@ -167,7 +167,6 @@ export async function getTopicInTenant(tenantId: string, topicId: string) {
     where: {
       id: topicId,
       tenantId,
-      schoolClass: { deletedAt: null },
       subject: { deletedAt: null },
     },
   });
@@ -180,12 +179,31 @@ export async function getTopicForSchoolRead(session: ScopedSession, topicId: str
       where: {
         id: topicId,
         tenant: { isPlatform: false, deletedAt: null },
-        schoolClass: { deletedAt: null },
         subject: { deletedAt: null },
       },
     });
   }
   return getTopicInTenant(session.user.tenantId, topicId);
+}
+
+/**
+ * Authorization helper for read endpoints: a topic is visible in `classId`
+ * iff its subject is linked to that class via SubjectClass.
+ */
+export async function topicVisibleInClass(topicId: string, classId: string) {
+  const row = await prisma.topic.findFirst({
+    where: {
+      id: topicId,
+      subject: {
+        deletedAt: null,
+        classLinks: {
+          some: { classId, schoolClass: { deletedAt: null } },
+        },
+      },
+    },
+    select: { id: true },
+  });
+  return Boolean(row);
 }
 
 export async function verifyClassInTenant(tenantId: string, classId: string) {
@@ -200,4 +218,27 @@ export async function verifySubjectInTenant(tenantId: string, subjectId: string)
     where: { id: subjectId, tenantId, deletedAt: null },
   });
   return row;
+}
+
+/**
+ * Common Pool gate: returns true only if the subject has been linked to the
+ * class via SubjectClass for this tenant. Topic creation and the per-class
+ * subject picker depend on this check.
+ */
+export async function verifySubjectLinkedToClass(
+  tenantId: string,
+  subjectId: string,
+  classId: string
+) {
+  const row = await prisma.subjectClass.findFirst({
+    where: {
+      tenantId,
+      subjectId,
+      classId,
+      subject: { deletedAt: null },
+      schoolClass: { deletedAt: null },
+    },
+    select: { id: true },
+  });
+  return Boolean(row);
 }

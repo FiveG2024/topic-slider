@@ -25,6 +25,7 @@ A classroom presentation and quiz tool for substitute teachers and volunteers. W
 
 - **School sites (tenants)**: Data partitioned per site (slug/name); soft-delete support for sites
 - **Class & subject**: Topics, students, and quotes scoped to a class and subject; dedicated **Class & subject** flow
+- **Common Pool subjects**: Subjects live in a shared tenant-wide pool and are linked to one or many classes via a many-to-many join (`SubjectClass`). Admins curate the pool from `/admin/subjects`; teachers see only the subjects linked to the class they’re teaching.
 - **Platform / super-admin**: `SUPER_ADMIN` role, platform area to manage tenants, optional read-only browsing of a chosen school
 - **Per-site quotes**: Inspirational quotes tied to each tenant
 
@@ -173,3 +174,38 @@ prisma/
 3. After slides → runs quiz → selects student → student answers → stars awarded
 4. Topic marked as "taught" → won't appear in untaught list next time
 5. Leaderboard shows cumulative stars across all topics
+
+## Common Pool subjects (architecture)
+
+Subjects are not bound to a single class. They live in a per-tenant pool and are linked to any number of classes via the `SubjectClass` join model:
+
+```
+Tenant ── 1:N ── SchoolClass
+                          \
+                           N:N (via SubjectClass)
+                          /
+Tenant ── 1:N ── Subject
+```
+
+- **Admins** create pool subjects at `/admin/subjects`, then check off the classes each subject is available in.
+- **Teachers** open **Class & subject**, pick a class, and only see subjects linked to that class. An admin in the same screen can use **Link from pool** to add more.
+- **Topic creation** is gated server-side: `POST /api/topics` rejects a `(classId, subjectId)` pair unless a `SubjectClass` row exists.
+
+Key endpoints:
+
+| Method & path | Purpose |
+| --- | --- |
+| `GET /api/me/subjects?classId=…` | Subjects linked to a class (teacher view) |
+| `GET /api/me/pool/subjects?classId=…` | Full pool with `linkedToCurrentClass` flags |
+| `GET /api/admin/subjects` | All pool subjects with their linked classes |
+| `POST /api/admin/subjects` | Create a pool subject; optional `classIds` to link immediately |
+| `GET /api/admin/subjects/:id/classes` | Editor view: every class plus `linked` flag |
+| `PUT /api/admin/subjects/:id/classes` | Sync linked classes (`{ classIds: string[] }`) |
+| `GET /api/admin/classes/:id/subjects` | Mirror view for a class |
+| `PUT /api/admin/classes/:id/subjects` | Sync linked subjects (`{ subjectIds: string[] }`) |
+
+Schema highlights (`prisma/schema.prisma`):
+
+- `Subject` keeps `tenantId` — pool membership is per tenant, not global.
+- `Topic` still carries `classId` + `subjectId` (a topic is taught in exactly one class+subject), but creation now requires the link.
+- Migration `20260513230000_add_subject_class_pool` backfills the join from every distinct `(classId, subjectId)` already used by a `Topic`, so existing topics keep working.

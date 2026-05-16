@@ -6,6 +6,7 @@ import { ChangeEvent, FormEvent, useCallback, useEffect, useRef, useState } from
 
 type Row = { id: string; code?: string; name?: string };
 type TenantRow = { id: string; slug: string; name: string };
+type PoolSubject = { id: string; name: string; linkedToCurrentClass: boolean };
 
 export default function ContextPage() {
   const { data: session, status, update } = useSession();
@@ -25,6 +26,11 @@ export default function ContextPage() {
   const [newSubjectName, setNewSubjectName] = useState("");
   const [adminMsg, setAdminMsg] = useState("");
   const classSelectRef = useRef<HTMLSelectElement>(null);
+  const [poolOpen, setPoolOpen] = useState(false);
+  const [poolSubjects, setPoolSubjects] = useState<PoolSubject[]>([]);
+  const [poolChecked, setPoolChecked] = useState<Set<string>>(new Set());
+  const [poolSaving, setPoolSaving] = useState(false);
+  const [poolMsg, setPoolMsg] = useState("");
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -50,34 +56,65 @@ export default function ContextPage() {
     }
   }, [session?.user?.superViewTenantId, isSuper]);
 
-  const reloadCatalog = useCallback(async () => {
+  const reloadClasses = useCallback(async () => {
     if (isSuper && !session?.user?.superViewTenantId) {
       setClasses([]);
-      setSubjects([]);
       return;
     }
-    const [c, s] = await Promise.all([fetch("/api/me/classes"), fetch("/api/me/subjects")]);
-    if (!c.ok || !s.ok) {
+    const c = await fetch("/api/me/classes");
+    if (!c.ok) {
       setClasses([]);
-      setSubjects([]);
       return;
     }
     const cl = await c.json();
-    const su = await s.json();
     if (Array.isArray(cl)) setClasses(cl);
-    if (Array.isArray(su)) setSubjects(su);
   }, [isSuper, session?.user?.superViewTenantId]);
+
+  /** Subjects available for a specific class — empty list before a class is picked. */
+  const reloadSubjectsForClass = useCallback(
+    async (cid: string) => {
+      if (!cid) {
+        setSubjects([]);
+        return;
+      }
+      if (isSuper && !session?.user?.superViewTenantId) {
+        setSubjects([]);
+        return;
+      }
+      const s = await fetch(`/api/me/subjects?classId=${encodeURIComponent(cid)}`);
+      if (!s.ok) {
+        setSubjects([]);
+        return;
+      }
+      const su = await s.json();
+      if (Array.isArray(su)) setSubjects(su);
+    },
+    [isSuper, session?.user?.superViewTenantId]
+  );
 
   useEffect(() => {
     if (status !== "authenticated") return;
-    reloadCatalog().catch(() => {});
-  }, [status, reloadCatalog]);
+    reloadClasses().catch(() => {});
+  }, [status, reloadClasses]);
+
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    reloadSubjectsForClass(classId).catch(() => {});
+  }, [status, classId, reloadSubjectsForClass]);
 
   useEffect(() => {
     if (!session?.user) return;
     if (session.user.classId) setClassId(session.user.classId);
     if (session.user.subjectId) setSubjectId(session.user.subjectId);
   }, [session?.user]);
+
+  // If the saved subject is no longer linked to the chosen class, clear it so
+  // the picker doesn't show a stale selection.
+  useEffect(() => {
+    if (!subjectId) return;
+    if (subjects.length === 0) return;
+    if (!subjects.some((s) => s.id === subjectId)) setSubjectId("");
+  }, [subjects, subjectId]);
 
   const canPickClass = !isSuper || Boolean(viewTenantId);
   const classReady = Boolean(classId);
@@ -109,11 +146,10 @@ export default function ContextPage() {
       setSubjects([]);
       return;
     }
-    const [c, s] = await Promise.all([fetch("/api/me/classes"), fetch("/api/me/subjects")]);
+    const c = await fetch("/api/me/classes");
     const cl = c.ok ? await c.json() : [];
-    const su = s.ok ? await s.json() : [];
     if (Array.isArray(cl)) setClasses(cl);
-    if (Array.isArray(su)) setSubjects(su);
+    setSubjects([]);
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -168,11 +204,15 @@ export default function ContextPage() {
     }
     setNewClassCode("");
     setNewClassName("");
-    await reloadCatalog();
+    await reloadClasses();
     setClassId(data.id);
     setAdminMsg("Class added.");
   }
 
+  /**
+   * New pool subjects start unlinked. If a class is selected, link the
+   * subject to that class immediately so the teacher can use it right away.
+   */
   async function handleAddSubject(e: FormEvent) {
     e.preventDefault();
     setAdminMsg("");
@@ -180,7 +220,10 @@ export default function ContextPage() {
     const res = await fetch("/api/admin/subjects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newSubjectName.trim() }),
+      body: JSON.stringify({
+        name: newSubjectName.trim(),
+        classIds: classId ? [classId] : [],
+      }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -188,9 +231,63 @@ export default function ContextPage() {
       return;
     }
     setNewSubjectName("");
-    await reloadCatalog();
-    setSubjectId(data.id);
-    setAdminMsg("Subject added.");
+    await reloadSubjectsForClass(classId);
+    if (classId) setSubjectId(data.id);
+    setAdminMsg(
+      classId
+        ? "Subject added to pool and linked to this class."
+        : "Subject added to pool. Open Subjects (admin) to link it to classes."
+    );
+  }
+
+  /** Open the pool picker, fetching the current link state for the chosen class. */
+  async function openPoolPicker() {
+    if (!classId) return;
+    setPoolMsg("");
+    setPoolOpen(true);
+    const res = await fetch(`/api/me/pool/subjects?classId=${encodeURIComponent(classId)}`);
+    if (!res.ok) {
+      setPoolMsg("Could not load the subject pool.");
+      return;
+    }
+    const data = await res.json();
+    const list: PoolSubject[] = Array.isArray(data?.subjects) ? data.subjects : [];
+    setPoolSubjects(list);
+    setPoolChecked(new Set(list.filter((s) => s.linkedToCurrentClass).map((s) => s.id)));
+  }
+
+  function togglePool(id: string) {
+    setPoolChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function savePool() {
+    if (!classId) return;
+    setPoolSaving(true);
+    setPoolMsg("");
+    try {
+      const res = await fetch(`/api/admin/classes/${classId}/subjects`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subjectIds: [...poolChecked] }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setPoolMsg(data.error || "Could not save links.");
+        return;
+      }
+      setPoolMsg(
+        `Saved. Linked ${data.added ?? 0}, unlinked ${data.removed ?? 0}.`
+      );
+      await reloadSubjectsForClass(classId);
+      setPoolOpen(false);
+    } finally {
+      setPoolSaving(false);
+    }
   }
 
   if (status === "loading" || status === "unauthenticated") {
@@ -288,16 +385,27 @@ export default function ContextPage() {
         </div>
 
         <div>
-          <label htmlFor="subjectId" className="flex items-center gap-2 text-sm font-medium text-gray-900 mb-1">
-            <span
-              className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
-                classReady ? "bg-indigo-100 text-indigo-800" : "bg-gray-100 text-gray-400"
-              }`}
-            >
-              2
-            </span>
-            Subject
-          </label>
+          <div className="flex items-center justify-between mb-1">
+            <label htmlFor="subjectId" className="flex items-center gap-2 text-sm font-medium text-gray-900">
+              <span
+                className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
+                  classReady ? "bg-indigo-100 text-indigo-800" : "bg-gray-100 text-gray-400"
+                }`}
+              >
+                2
+              </span>
+              Subject
+            </label>
+            {session?.user?.role === "ADMIN" && !isSuper && classReady && (
+              <button
+                type="button"
+                onClick={openPoolPicker}
+                className="text-xs font-medium text-indigo-700 hover:text-indigo-800 underline"
+              >
+                Link from pool
+              </button>
+            )}
+          </div>
           <select
             id="subjectId"
             value={subjectId}
@@ -311,7 +419,9 @@ export default function ContextPage() {
                 ? "Select a school first…"
                 : !classReady
                   ? "Choose a class first…"
-                  : "Select subject…"}
+                  : subjects.length === 0
+                    ? "No subjects linked to this class yet…"
+                    : "Select subject…"}
             </option>
             {subjects.map((s) => (
               <option key={s.id} value={s.id}>
@@ -319,6 +429,13 @@ export default function ContextPage() {
               </option>
             ))}
           </select>
+          {classReady && subjects.length === 0 && (
+            <p className="mt-1.5 text-xs text-amber-700">
+              {session?.user?.role === "ADMIN" && !isSuper
+                ? "This class has no subjects linked from the pool yet. Use “Link from pool” above."
+                : "Ask an admin to link subjects from the pool to this class."}
+            </p>
+          )}
         </div>
 
         <button
@@ -357,20 +474,92 @@ export default function ContextPage() {
               </button>
             </form>
             <form onSubmit={handleAddSubject} className="space-y-2">
-              <p className="text-xs font-medium text-gray-800">New subject</p>
+              <p className="text-xs font-medium text-gray-800">New pool subject</p>
               <input
                 value={newSubjectName}
                 onChange={(e) => setNewSubjectName(e.target.value)}
                 placeholder="e.g. Bible Study"
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg text-gray-900"
               />
+              <p className="text-[11px] text-gray-600 leading-snug">
+                Goes into the shared pool. {classId ? "It will be linked to the selected class automatically." : "Pick a class first to link it instantly, or open the pool picker after."}
+              </p>
               <button
                 type="submit"
-                className="text-sm bg-indigo-600 text-white px-3 py-1.5 rounded-lg border border-indigo-200 mt-6"
+                className="text-sm bg-indigo-600 text-white px-3 py-1.5 rounded-lg border border-indigo-200 mt-1"
               >
-                Add subject
+                Add to pool
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {poolOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4"
+          onClick={() => !poolSaving && setPoolOpen(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 pt-5 pb-3 border-b border-gray-100">
+              <h3 className="text-lg font-semibold text-gray-900">Link subjects from pool</h3>
+              <p className="text-sm text-gray-600 mt-1">
+                Pick which shared pool subjects are available for{" "}
+                <span className="font-medium">
+                  {(() => {
+                    const c = classes.find((x) => x.id === classId);
+                    return c ? `${c.code}${c.name ? ` — ${c.name}` : ""}` : "this class";
+                  })()}
+                </span>
+                . Unchecking removes the link but does not delete topics.
+              </p>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-3">
+              {poolSubjects.length === 0 ? (
+                <p className="text-sm text-gray-500 py-4">
+                  The pool is empty. Add a new subject below the form first.
+                </p>
+              ) : (
+                <ul className="divide-y divide-gray-100">
+                  {poolSubjects.map((s) => (
+                    <li key={s.id} className="py-2 flex items-center gap-3">
+                      <input
+                        id={`pool-${s.id}`}
+                        type="checkbox"
+                        checked={poolChecked.has(s.id)}
+                        onChange={() => togglePool(s.id)}
+                        className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <label htmlFor={`pool-${s.id}`} className="text-sm text-gray-900 cursor-pointer flex-1">
+                        {s.name}
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {poolMsg && <p className="mt-2 text-xs text-gray-600">{poolMsg}</p>}
+            </div>
+            <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPoolOpen(false)}
+                disabled={poolSaving}
+                className="text-sm px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={savePool}
+                disabled={poolSaving}
+                className="text-sm px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {poolSaving ? "Saving…" : "Save links"}
+              </button>
+            </div>
           </div>
         </div>
       )}

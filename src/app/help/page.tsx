@@ -28,8 +28,15 @@ function Section({
   );
 }
 
-function Sub({ children }: { children: ReactNode }) {
-  return <h3 className="pt-4 text-base font-semibold text-gray-900 first:pt-0">{children}</h3>;
+function Sub({ children, id }: { children: ReactNode; id?: string }) {
+  return (
+    <h3
+      id={id}
+      className="scroll-mt-24 pt-4 text-base font-semibold text-gray-900 first:pt-0"
+    >
+      {children}
+    </h3>
+  );
 }
 
 export default async function HelpPage() {
@@ -96,6 +103,13 @@ export default async function HelpPage() {
             <li>
               <a href="#school-admin" className="font-medium hover:underline">
                 School admin
+              </a>
+            </li>
+          )}
+          {isAdmin && (
+            <li>
+              <a href="#subject-pool" className="font-medium hover:underline">
+                Subject pool
               </a>
             </li>
           )}
@@ -188,14 +202,24 @@ export default async function HelpPage() {
                 ).
               </li>
               <li>
-                Then select <strong>Subject</strong> (e.g. Bible Study). The subject field stays disabled until
-                a class is chosen.
+                Then select <strong>Subject</strong>. The dropdown only lists subjects that an admin has{" "}
+                <strong>linked from the shared pool</strong> to that class — so the same class in two sites can
+                offer different subjects without duplicating the catalog.
               </li>
               <li>
                 Click <strong>Save &amp; go to dashboard</strong>. Your header pill updates with site and class.
               </li>
             </ol>
-            <Sub>Adding new classes or subjects (school admin only)</Sub>
+            <div className="rounded-lg border border-indigo-200 bg-indigo-50/70 p-3 text-sm text-gray-800">
+              <p className="font-semibold text-gray-900">New: Common Pool subjects</p>
+              <p className="mt-1">
+                Subjects no longer live inside a single class. Each site has a <strong>shared pool</strong> of
+                subjects (e.g. <em>Bible Study</em>, <em>Mezmur</em>), and any subject can be linked to one or
+                many classes. If a subject is missing from the dropdown, it just means it has not been linked
+                to that class yet — ask an admin to use the pool picker.
+              </p>
+            </div>
+            <Sub>Adding new classes or pool subjects (school admin only)</Sub>
             <p>
               On the same page, scroll to <strong>Add class or subject (admin)</strong> (light blue card):
             </p>
@@ -205,13 +229,23 @@ export default async function HelpPage() {
                 ) and optional display name, then <strong>Add class</strong>.
               </li>
               <li>
-                <strong>New subject</strong> — enter a name (e.g. &quot;Bible Study&quot;), then{" "}
-                <strong>Add subject</strong>.
+                <strong>New pool subject</strong> — enter a name (e.g. &quot;Bible Study&quot;), then{" "}
+                <strong>Add to pool</strong>. It goes into the tenant-wide pool. If a class is already
+                selected, it is linked to that class automatically; otherwise link it later from the pool
+                picker.
+              </li>
+              <li>
+                <strong>Link from pool</strong> — when a class is selected, admins see a small{" "}
+                <em>Link from pool</em> button next to the Subject field. Open it to check which existing
+                subjects should appear for this class.
               </li>
             </ul>
             <p className="text-gray-600">
-              After adding, pick the new class or subject from the dropdowns above and save. Volunteers cannot
-              add classes or subjects; ask your school admin.
+              For the full pool view across every class, go to{" "}
+              <Link href="/admin/subjects" className="text-indigo-600 hover:underline">
+                Admin → Subject pool
+              </Link>
+              . Volunteers cannot add or link subjects; ask your school admin.
             </p>
           </>
         </Section>
@@ -279,6 +313,7 @@ export default async function HelpPage() {
               <li>
                 Open <Link href="/admin" className="text-indigo-600 hover:underline">Admin</Link>, set{" "}
                 <strong>Class</strong> and <strong>Subject</strong> if the dropdowns differ from your session.
+                The Subject menu only shows subjects already linked to the chosen class.
               </li>
               <li>
                 Enter a <strong>title</strong> and optional description, then <strong>Add Topic</strong>.
@@ -288,6 +323,18 @@ export default async function HelpPage() {
                 <strong>quizzes</strong>, and optional <strong>Jeopardy</strong> boards.
               </li>
             </ol>
+            <p className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-sm text-gray-800">
+              <strong className="text-amber-900">Heads up:</strong> if the subject you need isn&apos;t in the
+              dropdown, it just hasn&apos;t been linked to this class yet. Go to{" "}
+              <Link href="/admin/subjects" className="text-indigo-700 hover:underline font-semibold">
+                Admin → Subject pool
+              </Link>{" "}
+              or use the <em>Link from pool</em> button on{" "}
+              <Link href="/context" className="text-indigo-700 hover:underline">
+                Class &amp; subject
+              </Link>{" "}
+              to add it, then come back here to create the topic.
+            </p>
             <Sub>Present (volunteer or admin)</Sub>
             <ol className="list-decimal space-y-2 pl-5">
               <li>
@@ -368,6 +415,37 @@ export default async function HelpPage() {
                 </a>{" "}
                 above.
               </p>
+              <Sub id="subject-pool">Subject pool (Common Pool model)</Sub>
+              <p>
+                <Link href="/admin/subjects" className="font-semibold text-indigo-600 hover:underline">
+                  Admin → Subject pool
+                </Link>{" "}
+                is where you curate the tenant-wide list of subjects and decide which classes can use each one.
+              </p>
+              <ul className="list-disc space-y-1.5 pl-5">
+                <li>
+                  <strong>Add a pool subject</strong> — give it a name, then optionally tick the classes it
+                  should appear in (you can change this any time).
+                </li>
+                <li>
+                  <strong>Edit class links</strong> — every subject row shows the classes it&apos;s linked to.
+                  Open the editor to check or uncheck classes. Unchecking only removes the link — existing
+                  topics in that class are kept; you just won&apos;t be able to create new ones with that pair
+                  until you re-link.
+                </li>
+                <li>
+                  <strong>From the class side</strong> — on{" "}
+                  <Link href="/context" className="text-indigo-600 hover:underline">
+                    Class &amp; subject
+                  </Link>{" "}
+                  pick a class and use <em>Link from pool</em> for a quick checkbox picker.
+                </li>
+                <li>
+                  <strong>Same subject, multiple classes</strong> — link <em>Bible Study</em> to 111, 113,
+                  and 115 once; topics, quizzes, and stars stay separate per class, but the subject definition
+                  is shared.
+                </li>
+              </ul>
               <Sub>Volunteer invites</Sub>
               <p>
                 <Link href="/admin/volunteer-access" className="font-semibold text-indigo-600 hover:underline">
@@ -439,7 +517,8 @@ export default async function HelpPage() {
               </li>
               <li>
                 <strong>Classes &amp; subjects</strong> — organize teaching by section and track (e.g. Mezmur,
-                Bible Study).
+                Bible Study). Subjects live in a <strong>shared pool</strong> and are linked to one or many
+                classes, so the same subject can be taught across sections without duplicating the catalog.
               </li>
               <li>
                 <strong>Topics</strong> — lesson units with slides, text, images, and embedded video.
